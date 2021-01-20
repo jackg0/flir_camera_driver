@@ -68,6 +68,10 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <dynamic_reconfigure/server.h>  // Needed for the dynamic_reconfigure gui service to run
 
+#ifdef HAVE_ICEORYX
+#include <iceoryx_posh/popo/publisher.hpp>
+#endif
+
 #include <fstream>
 #include <string>
 
