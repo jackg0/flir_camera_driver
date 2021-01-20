@@ -50,6 +50,7 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "ros/ros.h"
 #include <pluginlib/class_list_macros.h>
 #include <nodelet/nodelet.h>
+#include <ros/serialization.h>
 
 #include "spinnaker_camera_driver/SpinnakerCamera.h"  // The actual standalone library for the Spinnakers
 #include "spinnaker_camera_driver/diagnostics.h"
@@ -70,10 +71,42 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #ifdef HAVE_ICEORYX
 #include <iceoryx_posh/popo/publisher.hpp>
+#else
+#error foo
 #endif
 
 #include <fstream>
+#include <functional>
+#include <memory>
 #include <string>
+
+namespace
+{
+
+struct ScopedAction
+{
+  using Action = std::function<void(void)>;
+
+  ScopedAction(Action action):
+    action(std::move(action))
+  {
+  }
+
+  ScopedAction(const ScopedAction &) = delete;
+  ScopedAction &operator=(const ScopedAction &) = delete;
+  ScopedAction(ScopedAction &&) = default;
+  ScopedAction &operator=(ScopedAction &&) = default;
+
+  ~ScopedAction()
+  {
+    if (action)
+      action();
+  }
+
+  Action action;
+};
+
+}
 
 namespace spinnaker_camera_driver
 {
@@ -366,6 +399,16 @@ private:
             diagnostic_updater::TimeStampStatusParam(min_acceptable,
                                                      max_acceptable)));
 
+    #ifdef HAVE_ICEORYX
+    bool use_iox{false};
+    pnh.param<bool>("use_iceoryx_image_pub", use_iox);
+    if (use_iox)
+    {
+      NODELET_DEBUG("instantiating iox publisher");
+      iox_pub_ = instantiateIoxPublisher("image");
+    }
+    #endif
+
     // Set up diagnostics aggregator publisher and diagnostics manager
     ros::SubscriberStatusCallback diag_cb =
         boost::bind(&SpinnakerCameraNodelet::diagCb, this);
@@ -623,7 +666,8 @@ private:
             wfov_image->info = *ci_;
 
             // Publish the full message
-            pub_->publish(wfov_image);
+            //pub_->publish(wfov_image);
+            publishImage(*wfov_image);
 
             // Publish the message using standard image transport
             if (it_pub_.getNumSubscribers() > 0)
@@ -675,6 +719,56 @@ private:
     }
   }
 
+  void publishImage(const wfov_camera_msgs::WFOVImage &img)
+  {
+    enum { UseDynamicSizes = true };
+
+    #ifdef HAVE_ICEORYX
+    if (iox_pub_)
+    {
+      iox::mepoo::ChunkHeader chunk{ };
+      ScopedAction freeChunk([this, &chunk] { if (chunk) iox_pub_->freeChunk(chunk); });
+
+      auto len = ros::serializatin::serializationLength(img);
+      NODELET_DEBUG("image ser len: %zu", len);
+
+      chunk = iox_pub_->allocateChunkWithHeader(len, UseDynamicSizes);
+      if (!chunk)
+        return;
+
+      ros::serialization::OStream stream(
+        chunk->payload(),
+        static_cast<uint32_t>(chunk->m_info.m_payloadSize));
+
+      ros::serialization::serialize(stream, img);
+
+      iox_pub_->sendChunk(chunk);
+
+      return;
+    }
+    #endif
+
+    if (pub_)
+      pub_->publish(img);
+  }
+
+  #ifdef HAVE_ICEORYX
+  void instantiateIoxPublisher(const std::string &topic)
+  {
+    if (topic.size() > 100)
+    {
+      throw std::invalid_argument(
+        "flir camera driver nodelet: topic " +
+        topic + " is too long (max: 100 chars)");
+    }
+
+    iox::cxx::CString100 topicCStr{topic.c_str()};
+
+    return std::make_unique<iox::popo::Publisher(
+      capro::ServiceDescription{"oryx", "0", topicCStr});
+  }
+  #endif
+
   /* Class Fields */
   std::shared_ptr<dynamic_reconfigure::Server<spinnaker_camera_driver::SpinnakerConfig> > srv_;  ///< Needed to
                                                                                                  ///  initialize
@@ -688,6 +782,11 @@ private:
   image_transport::CameraPublisher it_pub_;                        ///< CameraInfoManager ROS publisher
   std::shared_ptr<diagnostic_updater::DiagnosedPublisher<wfov_camera_msgs::WFOVImage> > pub_;  ///< Diagnosed
   std::shared_ptr<ros::Publisher> diagnostics_pub_;
+
+  #ifdef HAVE_ICEORYX
+  std::unique_ptr<iox::popo::Publisher> iox_pub_;
+  #endif
+
   /// publisher, has to be
   /// a pointer because of
   /// constructor

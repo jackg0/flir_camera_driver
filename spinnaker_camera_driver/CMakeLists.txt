@@ -11,7 +11,7 @@ find_package(catkin REQUIRED COMPONENTS
   wfov_camera_msgs
 )
 
-find_package(iceoryx_posh)
+find_package(iceoryx_posh REQUIRED)
 find_package(iceoryx_utils)
 
 generate_dynamic_reconfigure_options(
@@ -85,7 +85,8 @@ add_dependencies(Diagnostics ${PROJECT_NAME}_gencfg)
 
 add_library(SpinnakerCameraNodelet src/nodelet.cpp)
 target_link_libraries(SpinnakerCameraNodelet Diagnostics SpinnakerCameraLib Camera Gh3 Cm3 ${catkin_LIBRARIES})
-if(iceoryx_posh-FOUND)
+message("iox found? ${iceoryx_posh-FOUND}")
+if(TRUE) #iceoryx_posh-FOUND)
     target_link_libraries(SpinnakerCameraNodelet iceoryx_posh::iceoryx_posh iceoryx_utils::iceoryx_utils)
     target_compile_definitions(SpinnakerCameraNodelet PRIVATE HAVE_ICEORYX)
 endif()
