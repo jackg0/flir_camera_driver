@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.10)
 
 set_directory_properties(PROPERTIES COMPILE_OPTIONS "-std=c++11;-Wall;-Wextra")
 
@@ -10,9 +10,6 @@ find_package(catkin REQUIRED COMPONENTS
   image_exposure_msgs image_transport nodelet roscpp sensor_msgs
   wfov_camera_msgs
 )
-
-find_package(iceoryx_posh REQUIRED)
-find_package(iceoryx_utils)
 
 generate_dynamic_reconfigure_options(
   cfg/Spinnaker.cfg
@@ -45,6 +42,10 @@ include_directories(SYSTEM
 include_directories(include)
 
 add_library(SpinnakerCameraLib src/SpinnakerCamera.cpp)
+
+# find optional iceoryx libs.
+find_package(iceoryx_posh)
+find_package(iceoryx_utils)
 
 # Include the Spinnaker Libs
 target_link_libraries(SpinnakerCameraLib
@@ -85,8 +86,8 @@ add_dependencies(Diagnostics ${PROJECT_NAME}_gencfg)
 
 add_library(SpinnakerCameraNodelet src/nodelet.cpp)
 target_link_libraries(SpinnakerCameraNodelet Diagnostics SpinnakerCameraLib Camera Gh3 Cm3 ${catkin_LIBRARIES})
-message("iox found? ${iceoryx_posh-FOUND}")
-if(TRUE) #iceoryx_posh-FOUND)
+if(iceoryx_posh_FOUND)
+    message(STATUS "building with iceoryx")
     target_link_libraries(SpinnakerCameraNodelet iceoryx_posh::iceoryx_posh iceoryx_utils::iceoryx_utils)
     target_compile_definitions(SpinnakerCameraNodelet PRIVATE HAVE_ICEORYX)
 endif()

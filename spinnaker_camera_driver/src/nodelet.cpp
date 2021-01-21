@@ -46,6 +46,11 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
    @brief ROS nodelet for the Point Grey Chameleon Camera - Updated to use Spinnaker driver insteady of Flycapture
 */
 
+#ifdef HAVE_ICEORYX
+#include <iceoryx_posh/runtime/posh_runtime.hpp>
+#include <iceoryx_posh/popo/publisher.hpp>
+#endif
+
 // ROS and associated nodelet interface and PLUGINLIB declaration header
 #include "ros/ros.h"
 #include <pluginlib/class_list_macros.h>
@@ -68,12 +73,6 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <boost/thread.hpp>  // Needed for the nodelet to launch the reading thread.
 
 #include <dynamic_reconfigure/server.h>  // Needed for the dynamic_reconfigure gui service to run
-
-#ifdef HAVE_ICEORYX
-#include <iceoryx_posh/popo/publisher.hpp>
-#else
-#error foo
-#endif
 
 #include <fstream>
 #include <functional>
@@ -105,6 +104,26 @@ struct ScopedAction
 
   Action action;
 };
+
+#ifdef HAVE_ICEORYX
+std::unique_ptr<iox::popo::Publisher> instantiateIoxPublisher(const std::string &topic)
+{
+  iox::runtime::PoshRuntime::getInstance("/flir_oryx");
+
+  if (topic.size() > 100)
+  {
+    throw std::invalid_argument(
+      "flir camera driver nodelet: topic " +
+      topic + " is too long (max: 100 chars)");
+  }
+
+  iox::cxx::CString100 topicCStr;
+  topicCStr.unsafe_assign(topic);
+
+  return std::unique_ptr<iox::popo::Publisher>{
+    new iox::popo::Publisher(iox::capro::ServiceDescription{"oryx", "0", topicCStr})};
+}
+#endif
 
 }
 
@@ -726,18 +745,18 @@ private:
     #ifdef HAVE_ICEORYX
     if (iox_pub_)
     {
-      iox::mepoo::ChunkHeader chunk{ };
+      iox::mepoo::ChunkHeader *chunk{ };
       ScopedAction freeChunk([this, &chunk] { if (chunk) iox_pub_->freeChunk(chunk); });
 
-      auto len = ros::serializatin::serializationLength(img);
-      NODELET_DEBUG("image ser len: %zu", len);
+      auto len = ros::serialization::serializationLength(img);
+      NODELET_DEBUG("image ser len: %u", len);
 
       chunk = iox_pub_->allocateChunkWithHeader(len, UseDynamicSizes);
       if (!chunk)
         return;
 
       ros::serialization::OStream stream(
-        chunk->payload(),
+        reinterpret_cast<uint8_t *>(chunk->payload()),
         static_cast<uint32_t>(chunk->m_info.m_payloadSize));
 
       ros::serialization::serialize(stream, img);
@@ -751,23 +770,6 @@ private:
     if (pub_)
       pub_->publish(img);
   }
-
-  #ifdef HAVE_ICEORYX
-  void instantiateIoxPublisher(const std::string &topic)
-  {
-    if (topic.size() > 100)
-    {
-      throw std::invalid_argument(
-        "flir camera driver nodelet: topic " +
-        topic + " is too long (max: 100 chars)");
-    }
-
-    iox::cxx::CString100 topicCStr{topic.c_str()};
-
-    return std::make_unique<iox::popo::Publisher(
-      capro::ServiceDescription{"oryx", "0", topicCStr});
-  }
-  #endif
 
   /* Class Fields */
   std::shared_ptr<dynamic_reconfigure::Server<spinnaker_camera_driver::SpinnakerConfig> > srv_;  ///< Needed to
