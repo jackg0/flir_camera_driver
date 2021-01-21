@@ -353,8 +353,9 @@ bool SpinnakerCamera::grabImage(sensor_msgs::Image* image, const std::string& fr
       else
       {
         // Set Image Time Stamp
-        image->header.stamp.sec = image_ptr->GetTimeStamp() * 1e-9;
-        image->header.stamp.nsec = image_ptr->GetTimeStamp();
+        ros::Time imgStamp(image_ptr->GetTimeStamp() * 1e-9);
+        ros::Duration ptpOffset(-37);
+        image->header.stamp = imgStamp + ptpOffset;
 
         // Check the bits per pixel.
         size_t bitsPerPixel = image_ptr->GetBitsPerPixel();
