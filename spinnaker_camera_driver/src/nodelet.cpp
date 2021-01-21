@@ -763,6 +763,10 @@ private:
 
       iox_pub_->sendChunk(chunk);
 
+      // once the chunk has been sent, we don't want to free it - that's a job
+      // for the receivers.
+      chunk = nullptr;
+
       return;
     }
     #endif
