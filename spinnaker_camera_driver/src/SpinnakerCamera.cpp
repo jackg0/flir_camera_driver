@@ -352,10 +352,11 @@ bool SpinnakerCamera::grabImage(sensor_msgs::Image* image, const std::string& fr
       }
       else
       {
-        // Set Image Time Stamp
+        // Set Image Time Stamp. Use -37s to account for UTC/TAI offset.
         ros::Time imgStamp(image_ptr->GetTimeStamp() * 1e-9);
-        ros::Duration ptpOffset(-37);
+	ros::Duration ptpOffset(-37);
         image->header.stamp = imgStamp + ptpOffset;
+        image->image.header.stamp = imgStamp + ptpOffset;
 
         // Check the bits per pixel.
         size_t bitsPerPixel = image_ptr->GetBitsPerPixel();
