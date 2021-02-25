@@ -497,7 +497,7 @@ private:
     if (use_iox_)
     {
       NODELET_DEBUG("instantiating iox publisher");
-      iox_pub_ = IoxPublisher(pnh, "image");
+      iox_pub_ = IoxPublisher(pnh, pub_->getPublisher().getTopic());
     }
     #endif
 
