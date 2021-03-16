@@ -97,6 +97,8 @@ void Camera::setNewConfiguration(const SpinnakerConfig& config, const uint32_t& 
 
     const std::string entry_name("SlaveOnly");
     setProperty(node_map_, "GevIEEE1588Mode", entry_name);
+    Spinnaker::GenApi::CEnumerationPtr ptp_status_ptr =
+        static_cast<Spinnaker::GenApi::CEnumerationPtr>(node_map_->GetNode("GevIEEE1588Status"));
     // Set sharpness
     if (IsAvailable(node_map_->GetNode("SharpeningEnable")))
     {

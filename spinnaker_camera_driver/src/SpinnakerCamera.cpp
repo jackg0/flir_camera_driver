@@ -352,10 +352,28 @@ bool SpinnakerCamera::grabImage(sensor_msgs::Image* image, const std::string& fr
       }
       else
       {
-        // Set Image Time Stamp. Use -37s to account for UTC/TAI offset.
-        ros::Time imgStamp(image_ptr->GetTimeStamp() * 1e-9);
-        ros::Duration ptpOffset(-37);
-        image->header.stamp = imgStamp + ptpOffset;
+       
+        image->header.stamp = ros::Time::now();
+        
+        Spinnaker::GenApi::CEnumerationPtr ptp_status_ptr =
+            static_cast<Spinnaker::GenApi::CEnumerationPtr>(node_map_->GetNode("GevIEEE1588Status"));
+        if (ptp_status_ptr->GetCurrentEntry() == ptp_status_ptr->GetEntryByName("Slave"))
+        {
+            try
+            {
+                // Set Image Time Stamp. Use -37s to account for UTC/TAI offset.
+                ros::Time imgStamp(image_ptr->GetTimeStamp() * 1e-9);
+                image->header.stamp = imgStamp;
+                ros::Duration ptpOffsetDuration(37);
+                image->header.stamp -= ptpOffsetDuration;
+                ROS_DEBUG("[SpinnakerCamera::grabImage] Image timestamp set from ptp with timestamp %i.%i", image->header.stamp.sec, image->header.stamp.nsec);
+            }
+            catch (const std::runtime_error& ex)
+            {
+                ROS_WARN("[SpinnakerCamera::grabImage] Image timestamp is out of 32-bit range %i.%i.", image->header.stamp.sec, image->header.stamp.nsec);
+                return false;
+            }
+        }
 
         // Check the bits per pixel.
         size_t bitsPerPixel = image_ptr->GetBitsPerPixel();
