@@ -357,7 +357,9 @@ bool SpinnakerCamera::grabImage(sensor_msgs::Image* image, const std::string& fr
         
         Spinnaker::GenApi::CEnumerationPtr ptp_status_ptr =
             static_cast<Spinnaker::GenApi::CEnumerationPtr>(node_map_->GetNode("GevIEEE1588Status"));
-        if (ptp_status_ptr->GetCurrentEntry() == ptp_status_ptr->GetEntryByName("Slave"))
+        ROS_DEBUG_STREAM("[SpinnakerCamera::grabImage] Current ptp status " << ptp_status_ptr->GetIntValue());
+        ROS_DEBUG_STREAM("[SpinnakerCamera::grabImage] PTP status in slave mode " << Spinnaker::GevIEEE1588Status_Slave);
+        if (ptp_status_ptr->GetIntValue() == Spinnaker::GevIEEE1588Status_Slave)
         {
             try
             {
