@@ -124,16 +124,20 @@ void Camera::setNewConfiguration(const SpinnakerConfig& config, const uint32_t& 
     // Set shutter time/speed
     if (config.target_grey_value_auto.compare(std::string("Off")) == 0)
     {
-      setProperty(node_map_, "AutoTargetGreyValue", "Off");
-      setProperty(node_map_, "TargetGreyValue", static_cast<float>(config.target_grey_value));
+      Spinnaker::GenApi::CEnumerationPtr target_grey_value_auto_ptr =
+           static_cast<Spinnaker::GenApi::CEnumerationPtr>(node_map_->GetNode("AutoExposureTargetGreyValueAuto"));
+      target_grey_value_auto_ptr->SetIntValue(Spinnaker::AutoExposureTargetGreyValueAuto_Off);
+      setProperty(node_map_, "AutoExposureTargetGreyValue", static_cast<float>(config.target_grey_value));
     }
     else
     {
-      setProperty(node_map_, "AutoTargetGreyValue", "Continuous");
-      setProperty(node_map_, "AutoTargetGreyValueUpperLimit",
+      Spinnaker::GenApi::CEnumerationPtr target_grey_value_auto_ptr =
+           static_cast<Spinnaker::GenApi::CEnumerationPtr>(node_map_->GetNode("AutoExposureTargetGreyValueAuto"));
+      target_grey_value_auto_ptr->SetIntValue(Spinnaker::AutoExposureTargetGreyValueAuto_Continuous);
+      setProperty(node_map_, "AutoExposureGreyValueUpperLimit",
                   static_cast<float>(config.auto_target_grey_value_upper_limit));
-      setProperty(node_map_, "AutoTargetGreyValueLowerLimit",
-                  static_cast<float>(config.auto_target_grey_value_lower_limit));
+      setProperty(node_map_, "AutoExposureGreyValueLowerLimit",
+                  static_cast<float>(config.auto_target_grey_value_lower_limit)); 
     }
 
     // Set shutter time/speed
