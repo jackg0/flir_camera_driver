@@ -607,6 +607,12 @@ private:
             break;
           }
 
+          if (!pub_)
+          {
+            NODELET_WARN("devicePoll: publisher instance is null.");
+            break;
+          }
+
           NODELET_DEBUG_ONCE("devicePoll: waiting for subs");
           const auto pubCount = pub_->getPublisher().getNumSubscribers();
           const auto itCount = it_pub_.getNumSubscribers();
