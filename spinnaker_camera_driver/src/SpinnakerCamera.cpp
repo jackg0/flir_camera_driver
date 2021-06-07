@@ -138,24 +138,32 @@ void SpinnakerCamera::connect()
     // If we have a specific camera to connect to (specified by a serial number)
     if (serial_ != 0)
     {
-      const auto serial_string = std::to_string(serial_);
-
-      try
-      {
-        pCam_ = camList_.GetBySerial(serial_string);
-      }
-      catch (const Spinnaker::Exception& e)
-      {
-        throw std::runtime_error("[SpinnakerCamera::connect] Could not find camera with serial number " +
-                                 serial_string + ". Is that camera plugged in? Error: " + std::string(e.what()));
-      }
-    }
-    else
-    {
       // Connect to any camera (the first)
       try
       {
-        pCam_ = camList_.GetByIndex(0);
+        const unsigned int numCams = camList_.GetSize();
+        for (unsigned int i = 0; i < numCams; i++)
+        {
+          auto tempCam = camList_.GetByIndex(i);
+          Spinnaker::GenApi::INodeMap& genTLNodeMap = tempCam->GetTLDeviceNodeMap();
+
+          Spinnaker::GenApi::CBooleanPtr wrongSubnet = genTLNodeMap.GetNode("GevDeviceIsWrongSubnet");
+          Spinnaker::GenApi::CStringPtr serialNumber = genTLNodeMap.GetNode("DeviceSerialNumber");
+          if (wrongSubnet->GetValue()) {
+            ROS_INFO_STREAM("[SpinnakerCamera::connect] Skipping wrong subnet.");
+            continue;
+          }
+          ROS_INFO_STREAM("[SpinnakerCamera::connect] Found camera on correct subnet.");
+
+	  if (std::to_string(serial_) != serialNumber->ToString().c_str())
+          {
+            ROS_INFO_STREAM("[SpinnakerCamera::connect] Serial number does not match.");
+            continue;
+          }
+
+          pCam_ = tempCam;
+          break;
+        }
       }
       catch (const Spinnaker::Exception& e)
       {
@@ -217,6 +225,7 @@ void SpinnakerCamera::connect()
     try
     {
       // Initialize Camera
+      ROS_INFO_STREAM("[SpinnakerCamera::connect]: Initializing camera.");
       pCam_->Init();
 
       // Retrieve GenICam nodemap
@@ -321,7 +330,7 @@ void SpinnakerCamera::stop()
   }
 }
 
-void SpinnakerCamera::grabImage(sensor_msgs::Image* image, const std::string& frame_id)
+bool SpinnakerCamera::grabImage(sensor_msgs::Image* image, const std::string& frame_id)
 {
   std::lock_guard<std::mutex> scopedLock(mutex_);
 
@@ -337,14 +346,36 @@ void SpinnakerCamera::grabImage(sensor_msgs::Image* image, const std::string& fr
 
       if (image_ptr->IsIncomplete())
       {
-        throw std::runtime_error("[SpinnakerCamera::grabImage] Image received from camera " + std::to_string(serial_) +
+        ROS_WARN_STREAM("[SpinnakerCamera::grabImage] Image received from camera " + std::to_string(serial_) +
                                  " is incomplete.");
+        return false;
       }
       else
       {
-        // Set Image Time Stamp
-        image->header.stamp.sec = image_ptr->GetTimeStamp() * 1e-9;
-        image->header.stamp.nsec = image_ptr->GetTimeStamp();
+       
+        image->header.stamp = ros::Time::now();
+        
+        Spinnaker::GenApi::CEnumerationPtr ptp_status_ptr =
+            static_cast<Spinnaker::GenApi::CEnumerationPtr>(node_map_->GetNode("GevIEEE1588Status"));
+        ROS_DEBUG_STREAM("[SpinnakerCamera::grabImage] Current ptp status " << ptp_status_ptr->GetIntValue());
+        ROS_DEBUG_STREAM("[SpinnakerCamera::grabImage] PTP status in slave mode " << Spinnaker::GevIEEE1588Status_Slave);
+        if (ptp_status_ptr->GetIntValue() == Spinnaker::GevIEEE1588Status_Slave)
+        {
+            try
+            {
+                // Set Image Time Stamp. Use -37s to account for UTC/TAI offset.
+                ros::Time imgStamp(image_ptr->GetTimeStamp() * 1e-9);
+                image->header.stamp = imgStamp;
+                ros::Duration ptpOffsetDuration(37);
+                image->header.stamp -= ptpOffsetDuration;
+                ROS_DEBUG("[SpinnakerCamera::grabImage] Image timestamp set from ptp with timestamp %i.%i", image->header.stamp.sec, image->header.stamp.nsec);
+            }
+            catch (const std::runtime_error& ex)
+            {
+                ROS_WARN("[SpinnakerCamera::grabImage] Image timestamp is out of 32-bit range %i.%i.", image->header.stamp.sec, image->header.stamp.nsec);
+                return false;
+            }
+        }
 
         // Check the bits per pixel.
         size_t bitsPerPixel = image_ptr->GetBitsPerPixel();
@@ -437,6 +468,7 @@ void SpinnakerCamera::grabImage(sensor_msgs::Image* image, const std::string& fr
         // ROS_INFO_ONCE("\033[93m wxh: (%d, %d), stride: %d \n", width, height, stride);
         fillImage(*image, imageEncoding, height, width, stride, image_ptr->GetData());
         image->header.frame_id = frame_id;
+        return true;
       }  // end else
     }
     catch (const Spinnaker::Exception& e)

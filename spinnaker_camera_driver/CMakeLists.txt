@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.0.2)
+cmake_minimum_required(VERSION 3.10)
 
 set_directory_properties(PROPERTIES COMPILE_OPTIONS "-std=c++11;-Wall;-Wextra")
 
@@ -26,7 +26,7 @@ catkin_package(CATKIN_DEPENDS
 # contains them. We work around this by downloading the archive directly from
 # their website during this step in the build process.
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules")
-find_package(Spinnaker QUIET)
+find_package(Spinnaker)
 if(NOT Spinnaker_FOUND)
   message(STATUS "libSpinnaker not found in system library path")
   include(cmake/DownloadSpinnaker.cmake)
@@ -36,13 +36,16 @@ endif()
 message(STATUS "libSpinnaker library: ${Spinnaker_LIBRARIES}")
 message(STATUS "libSpinnaker include: ${Spinnaker_INCLUDE_DIRS}")
 
-
 include_directories(SYSTEM
                     ${Spinnaker_INCLUDE_DIRS}
                     ${catkin_INCLUDE_DIRS})
 include_directories(include)
 
 add_library(SpinnakerCameraLib src/SpinnakerCamera.cpp)
+
+# find optional iceoryx libs.
+find_package(iceoryx_posh)
+find_package(iceoryx_utils)
 
 # Include the Spinnaker Libs
 target_link_libraries(SpinnakerCameraLib
@@ -83,6 +86,11 @@ add_dependencies(Diagnostics ${PROJECT_NAME}_gencfg)
 
 add_library(SpinnakerCameraNodelet src/nodelet.cpp)
 target_link_libraries(SpinnakerCameraNodelet Diagnostics SpinnakerCameraLib Camera Gh3 Cm3 ${catkin_LIBRARIES})
+if(iceoryx_posh_FOUND)
+    message(STATUS "building with iceoryx")
+    target_link_libraries(SpinnakerCameraNodelet iceoryx_posh::iceoryx_posh iceoryx_utils::iceoryx_utils)
+    target_compile_definitions(SpinnakerCameraNodelet PRIVATE HAVE_ICEORYX)
+endif()
 
 add_executable(spinnaker_camera_node src/node.cpp)
 target_link_libraries(spinnaker_camera_node SpinnakerCameraLib ${catkin_LIBRARIES})
@@ -108,10 +116,6 @@ if(EXISTS ${CMAKE_CURRENT_BINARY_DIR}/usr/lib)
            PATTERN libQt* EXCLUDE)
 else()
   get_filename_component(Spinnaker_LIB_DIR ${Spinnaker_LIBRARIES} DIRECTORY)
-  file(READ ${PROJECT_SOURCE_DIR}/cmake/install_files filenames)
-  foreach(filename ${filenames})
-    install(FILES ${Spinnaker_LIB_DIR}/${filename} DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION})
-  endforeach()
 endif()
 
 install(FILES nodelet_plugins.xml DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION} )

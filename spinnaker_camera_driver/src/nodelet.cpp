@@ -46,10 +46,16 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
    @brief ROS nodelet for the Point Grey Chameleon Camera - Updated to use Spinnaker driver insteady of Flycapture
 */
 
+#ifdef HAVE_ICEORYX
+#include <iceoryx_posh/runtime/posh_runtime.hpp>
+#include <iceoryx_posh/popo/publisher.hpp>
+#endif
+
 // ROS and associated nodelet interface and PLUGINLIB declaration header
 #include "ros/ros.h"
 #include <pluginlib/class_list_macros.h>
 #include <nodelet/nodelet.h>
+#include <ros/serialization.h>
 
 #include "spinnaker_camera_driver/SpinnakerCamera.h"  // The actual standalone library for the Spinnakers
 #include "spinnaker_camera_driver/diagnostics.h"
@@ -69,7 +75,126 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <dynamic_reconfigure/server.h>  // Needed for the dynamic_reconfigure gui service to run
 
 #include <fstream>
+#include <functional>
+#include <memory>
 #include <string>
+
+namespace
+{
+
+#ifdef HAVE_ICEORYX
+struct ScopedAction
+{
+  using Action = std::function<void(void)>;
+
+  ScopedAction(Action action):
+    action(std::move(action))
+  {
+  }
+
+  ScopedAction(const ScopedAction &) = delete;
+  ScopedAction &operator=(const ScopedAction &) = delete;
+  ScopedAction(ScopedAction &&) = default;
+  ScopedAction &operator=(ScopedAction &&) = default;
+
+  ~ScopedAction()
+  {
+    if (action)
+      action();
+  }
+
+  Action action;
+};
+
+std::unique_ptr<iox::popo::Publisher> instantiateIoxPublisher(const ros::NodeHandle &nh, const std::string &topic)
+{
+  iox::runtime::PoshRuntime::getInstance(nh.resolveName("/flir_oryx"));
+
+  if (topic.size() > 100)
+  {
+    throw std::invalid_argument(
+      "flir camera driver nodelet: topic " +
+      topic + " is too long (max: 100 chars)");
+  }
+
+  iox::cxx::CString100 topicCStr;
+  topicCStr.unsafe_assign(topic);
+
+  return std::unique_ptr<iox::popo::Publisher>{
+    new iox::popo::Publisher(iox::capro::ServiceDescription{"oryx", "0", topicCStr})};
+}
+
+class IoxPublisher
+{
+public:
+  IoxPublisher() = default;
+
+  IoxPublisher(const ros::NodeHandle &nh, const std::string &topic)
+    : pub(instantiateIoxPublisher(nh, topic))
+  {
+    if (pub)
+      pub->offer();
+  }
+
+  bool hasSubscribers() noexcept
+  {
+    return pub && pub->hasSubscribers();
+  }
+
+  operator bool() const noexcept
+  {
+    return !!pub;
+  }
+
+  void publish(const wfov_camera_msgs::WFOVImage &img)
+  {
+    if (!pub)
+      return;
+
+    iox::mepoo::ChunkHeader *chunk{ };
+    ScopedAction freeChunk([this, &chunk] { if (chunk) pub->freeChunk(chunk); });
+
+    const auto len = ros::serialization::serializationLength(img);
+    ROS_DEBUG("image ser len %u", len);
+
+    chunk = pub->allocateChunkWithHeader(len, UseDynamicSizes);
+    if (!chunk)
+      return;
+
+    ros::serialization::OStream stream(
+      reinterpret_cast<uint8_t *>(chunk->payload()),
+      static_cast<uint32_t>(chunk->m_info.m_payloadSize));
+
+    ros::serialization::serialize(stream, img);
+
+    pub->sendChunk(chunk);
+
+    // once the chunk has been sent, we don't want to free it - that's a job
+    // for the receivers.
+    chunk = nullptr;
+  }
+
+private:
+  enum { UseDynamicSizes = true };
+
+  std::unique_ptr<iox::popo::Publisher> pub{ };
+};
+#else
+class IoxPublisher
+{
+public:
+  IoxPublisher() = default;
+
+  IoxPublisher(const ros::NodeHandle &, const std::string &) { }
+
+  bool hasSubscribers() noexcept { return false; }
+  operator bool() const noexcept { return false; }
+
+  void publish(const cv_bridge::CvImage &) { }
+};
+#endif
+
+}
 
 namespace spinnaker_camera_driver
 {
@@ -137,6 +262,8 @@ private:
       // No separate param in CameraInfo for binning/decimation
       binning_x_ = config.image_format_x_binning * config.image_format_x_decimation;
       binning_y_ = config.image_format_y_binning * config.image_format_y_decimation;
+
+      enable_ptp_ = config.enable_ptp;
 
       // Store CameraInfo RegionOfInterest information
       // TODO(mhosmar): Not compliant with CameraInfo message: "A particular ROI always denotes the
@@ -360,6 +487,20 @@ private:
             diagnostic_updater::TimeStampStatusParam(min_acceptable,
                                                      max_acceptable)));
 
+    pnh.getParam("wait_for_subscribers", wait_for_subs_);
+    NODELET_DEBUG("wait for subscribers? %s", wait_for_subs_ ? "yes" : "no");
+
+    #ifdef HAVE_ICEORYX
+    pnh.getParam("use_iceoryx_image_pub", use_iox_);
+    NODELET_DEBUG("(oryx) use iceoryx publisher for wfov? %s", use_iox_ ? "yes" : "no");
+
+    if (use_iox_)
+    {
+      NODELET_DEBUG("instantiating iox publisher");
+      iox_pub_ = IoxPublisher(pnh, pub_->getPublisher().getTopic());
+    }
+    #endif
+
     // Set up diagnostics aggregator publisher and diagnostics manager
     ros::SubscriberStatusCallback diag_cb =
         boost::bind(&SpinnakerCameraNodelet::diagCb, this);
@@ -374,7 +515,15 @@ private:
     diag_man->addDiagnostic("PowerSupplyVoltage", true, std::make_pair(4.5f, 5.2f), 4.4f, 5.3f);
     diag_man->addDiagnostic("PowerSupplyCurrent", true, std::make_pair(0.4f, 0.6f), 0.3f, 1.0f);
     diag_man->addDiagnostic<int>("DeviceUptime");
-    diag_man->addDiagnostic<int>("U3VMessageChannelID");
+    
+    std::string device_type;
+    pnh.param<std::string>("device_type", device_type, "USB3");
+    if (device_type == "USB3")
+    {
+        diag_man->addDiagnostic<int>("U3VMessageChannelID");
+    }
+
+    connectCb();
   }
 
   /**
@@ -434,10 +583,11 @@ private:
       STOPPED,
       DISCONNECTED,
       CONNECTED,
-      STARTED
+      STARTED,
+      WAITING
     };
 
-    State state = DISCONNECTED;
+    State state = WAITING;
     State previous_state = NONE;
 
     while (!boost::this_thread::interruption_requested())  // Block until we need to stop this thread.
@@ -448,6 +598,36 @@ private:
 
       switch (state)
       {
+        case WAITING:
+        {
+          if (!wait_for_subs_)
+          {
+            NODELET_DEBUG("devicePoll: skipping subcriber wait since wait_for_subscribers param is set to false.");
+            state = DISCONNECTED;
+            break;
+          }
+
+          if (!pub_)
+          {
+            NODELET_WARN("devicePoll: publisher instance is null.");
+            break;
+          }
+
+          NODELET_DEBUG_ONCE("devicePoll: waiting for subs");
+          const auto pubCount = pub_->getPublisher().getNumSubscribers();
+          const auto itCount = it_pub_.getNumSubscribers();
+
+          if (pubCount + itCount == 0)
+          {
+            ros::Duration(0.1).sleep();
+            break;
+          }
+
+          NODELET_DEBUG("devicePoll: have subs, advancing to next state.");
+          state = DISCONNECTED;
+
+          break;
+        }
         case ERROR:
 // Generally there's no need to stop before disconnecting after an
 // error. Indeed, stop will usually fail.
@@ -575,7 +755,10 @@ private:
             wfov_camera_msgs::WFOVImagePtr wfov_image(new wfov_camera_msgs::WFOVImage);
             // Get the image from the camera library
             NODELET_DEBUG_ONCE("Starting a new grab from camera with serial {%d}.", spinnaker_.getSerial());
-            spinnaker_.grabImage(&wfov_image->image, frame_id_);
+            if (!spinnaker_.grabImage(&wfov_image->image, frame_id_))
+            {
+              continue;
+            }
 
             // Set other values
             wfov_image->header.frame_id = frame_id_;
@@ -586,10 +769,12 @@ private:
 
             // wfov_image->temperature = spinnaker_.getCameraTemperature();
 
-            ros::Time time = ros::Time::now();
-            wfov_image->header.stamp = time;
-            wfov_image->image.header.stamp = time;
-
+            if (!enable_ptp_)
+            {
+              ros::Time time = ros::Time::now();
+              wfov_image->header.stamp = time;
+              wfov_image->image.header.stamp = time;
+            }
             // Set the CameraInfo message
             ci_.reset(new sensor_msgs::CameraInfo(cinfo_->getCameraInfo()));
             ci_->header.stamp = wfov_image->image.header.stamp;
@@ -606,10 +791,11 @@ private:
             wfov_image->info = *ci_;
 
             // Publish the full message
-            pub_->publish(wfov_image);
+            //pub_->publish(wfov_image);
+            publishImage(*wfov_image);
 
             // Publish the message using standard image transport
-            if (it_pub_.getNumSubscribers() > 0)
+            if (!wait_for_subs_ || it_pub_.getNumSubscribers() > 0)
             {
               sensor_msgs::ImagePtr image(new sensor_msgs::Image(wfov_image->image));
               it_pub_.publish(image, ci_);
@@ -658,6 +844,18 @@ private:
     }
   }
 
+  void publishImage(const wfov_camera_msgs::WFOVImage &img)
+  {
+    if (iox_pub_.hasSubscribers())
+    {
+      iox_pub_.publish(img);
+      return;
+    }
+
+    if (pub_)
+      pub_->publish(img);
+  }
+
   /* Class Fields */
   std::shared_ptr<dynamic_reconfigure::Server<spinnaker_camera_driver::SpinnakerConfig> > srv_;  ///< Needed to
                                                                                                  ///  initialize
@@ -671,6 +869,9 @@ private:
   image_transport::CameraPublisher it_pub_;                        ///< CameraInfoManager ROS publisher
   std::shared_ptr<diagnostic_updater::DiagnosedPublisher<wfov_camera_msgs::WFOVImage> > pub_;  ///< Diagnosed
   std::shared_ptr<ros::Publisher> diagnostics_pub_;
+
+  IoxPublisher iox_pub_;
+
   /// publisher, has to be
   /// a pointer because of
   /// constructor
@@ -704,6 +905,10 @@ private:
   size_t roi_width_;     ///< Camera Info ROI width
   bool do_rectify_;  ///< Whether or not to rectify as if part of an image.  Set to false if whole image, and true if in
                      /// ROI mode.
+
+  bool enable_ptp_{ };
+  bool use_iox_{ };
+  bool wait_for_subs_{true};
 
   // For GigE cameras:
   /// If true, GigE packet size is automatically determined, otherwise packet_size_ is used:

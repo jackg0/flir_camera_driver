@@ -93,6 +93,12 @@ void Camera::setNewConfiguration(const SpinnakerConfig& config, const uint32_t& 
     setProperty(node_map_, "ExposureMode", config.exposure_mode);
     setProperty(node_map_, "ExposureAuto", config.exposure_auto);
 
+    setProperty(node_map_, "GevIEEE1588", config.enable_ptp);
+
+    const std::string entry_name("SlaveOnly");
+    setProperty(node_map_, "GevIEEE1588Mode", entry_name);
+    Spinnaker::GenApi::CEnumerationPtr ptp_status_ptr =
+        static_cast<Spinnaker::GenApi::CEnumerationPtr>(node_map_->GetNode("GevIEEE1588Status"));
     // Set sharpness
     if (IsAvailable(node_map_->GetNode("SharpeningEnable")))
     {
@@ -113,6 +119,25 @@ void Camera::setNewConfiguration(const SpinnakerConfig& config, const uint32_t& 
       {
         setProperty(node_map_, "Saturation", static_cast<float>(config.saturation));
       }
+    }
+    
+    // Set shutter time/speed
+    if (config.target_grey_value_auto.compare(std::string("Off")) == 0)
+    {
+      Spinnaker::GenApi::CEnumerationPtr target_grey_value_auto_ptr =
+           static_cast<Spinnaker::GenApi::CEnumerationPtr>(node_map_->GetNode("AutoExposureTargetGreyValueAuto"));
+      target_grey_value_auto_ptr->SetIntValue(Spinnaker::AutoExposureTargetGreyValueAuto_Off);
+      setProperty(node_map_, "AutoExposureTargetGreyValue", static_cast<float>(config.target_grey_value));
+    }
+    else
+    {
+      Spinnaker::GenApi::CEnumerationPtr target_grey_value_auto_ptr =
+           static_cast<Spinnaker::GenApi::CEnumerationPtr>(node_map_->GetNode("AutoExposureTargetGreyValueAuto"));
+      target_grey_value_auto_ptr->SetIntValue(Spinnaker::AutoExposureTargetGreyValueAuto_Continuous);
+      setProperty(node_map_, "AutoExposureGreyValueUpperLimit",
+                  static_cast<float>(config.auto_target_grey_value_upper_limit));
+      setProperty(node_map_, "AutoExposureGreyValueLowerLimit",
+                  static_cast<float>(config.auto_target_grey_value_lower_limit)); 
     }
 
     // Set shutter time/speed
