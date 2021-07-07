@@ -512,15 +512,19 @@ private:
         frame_id_, std::to_string(spinnaker_.getSerial()), diagnostics_pub_));
     diag_man->addDiagnostic("DeviceTemperature", true, std::make_pair(0.0f, 90.0f), -10.0f, 95.0f);
     diag_man->addDiagnostic("AcquisitionResultingFrameRate", true, std::make_pair(10.0f, 60.0f), 5.0f, 90.0f);
-    diag_man->addDiagnostic("PowerSupplyVoltage", true, std::make_pair(4.5f, 5.2f), 4.4f, 5.3f);
     diag_man->addDiagnostic("PowerSupplyCurrent", true, std::make_pair(0.4f, 0.6f), 0.3f, 1.0f);
     diag_man->addDiagnostic<int>("DeviceUptime");
-    
+
     std::string device_type;
     pnh.param<std::string>("device_type", device_type, "USB3");
     if (device_type == "USB3")
     {
+        diag_man->addDiagnostic("PowerSupplyVoltage", true, std::make_pair(4.5f, 5.2f), 4.4f, 5.3f);
         diag_man->addDiagnostic<int>("U3VMessageChannelID");
+    }
+    else
+    {
+        diag_man->addDiagnostic("PowerSupplyVoltage", true, std::make_pair(11.8f, 24.2f), 11.7f, 24.3f);
     }
 
     connectCb();

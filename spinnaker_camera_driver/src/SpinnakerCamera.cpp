@@ -352,9 +352,9 @@ bool SpinnakerCamera::grabImage(sensor_msgs::Image* image, const std::string& fr
       }
       else
       {
-       
+
         image->header.stamp = ros::Time::now();
-        
+
         Spinnaker::GenApi::CEnumerationPtr ptp_status_ptr =
             static_cast<Spinnaker::GenApi::CEnumerationPtr>(node_map_->GetNode("GevIEEE1588Status"));
         ROS_DEBUG_STREAM("[SpinnakerCamera::grabImage] Current ptp status " << ptp_status_ptr->GetIntValue());
