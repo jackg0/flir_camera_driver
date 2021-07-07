@@ -514,6 +514,8 @@ private:
     diag_man->addDiagnostic("AcquisitionResultingFrameRate", true, std::make_pair(10.0f, 60.0f), 5.0f, 90.0f);
     diag_man->addDiagnostic("PowerSupplyCurrent", true, std::make_pair(0.4f, 0.6f), 0.3f, 1.0f);
     diag_man->addDiagnostic<int>("DeviceUptime");
+    diag_man->addDiagnostic("GevIEEE1588Status", true, 8, 7);
+    diag_man->addDiagnostic("ExposureAuto", true, 2, -1);
 
     std::string device_type;
     pnh.param<std::string>("device_type", device_type, "USB3");

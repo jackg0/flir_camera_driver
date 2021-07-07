@@ -61,19 +61,26 @@ template void DiagnosticsManager::addDiagnostic<float>(const Spinnaker::GenICam:
 void DiagnosticsManager::addDiagnostic(const Spinnaker::GenICam::gcstring name, bool check_ranges,
                                        std::pair<int, int> operational, int lower_bound, int upper_bound)
 {
-  diagnostic_params<int> param{ name, check_ranges, operational, lower_bound, upper_bound };
-  integer_params_.push_back(param);
+  diagnostic_bounds<int> param{ name, check_ranges, operational, lower_bound, upper_bound };
+  bounded_integer_params_.push_back(param);
 }
 
 void DiagnosticsManager::addDiagnostic(const Spinnaker::GenICam::gcstring name, bool check_ranges,
                                        std::pair<float, float> operational, float lower_bound, float upper_bound)
 {
-  diagnostic_params<float> param{ name, check_ranges, operational, lower_bound, upper_bound };
-  float_params_.push_back(param);
+  diagnostic_bounds<float> param{ name, check_ranges, operational, lower_bound, upper_bound };
+  bounded_float_params_.push_back(param);
+}
+
+void DiagnosticsManager::addDiagnostic(const Spinnaker::GenICam::gcstring name, bool check_value,
+                                       int ok_value, int warn_value)
+{
+  diagnostic_param<int> param{ name, check_value, ok_value, warn_value };
+  integer_params_.push_back(param);
 }
 
 template <typename T>
-diagnostic_msgs::DiagnosticStatus DiagnosticsManager::getDiagStatus(const diagnostic_params<T>& param, const T value)
+diagnostic_msgs::DiagnosticStatus DiagnosticsManager::getDiagStatus(const diagnostic_bounds<T>& param, const T value)
 {
   diagnostic_msgs::KeyValue kv;
   kv.key = param.parameter_name;
@@ -91,6 +98,37 @@ diagnostic_msgs::DiagnosticStatus DiagnosticsManager::getDiagStatus(const diagno
     diag_status.message = "OK";
   }
   else if (value >= param.warn_range_lower && value <= param.warn_range_upper)
+  {
+    diag_status.level = 1;
+    diag_status.message = "WARNING";
+  }
+  else
+  {
+    diag_status.level = 2;
+    diag_status.message = "ERROR";
+  }
+
+  return diag_status;
+}
+
+diagnostic_msgs::DiagnosticStatus DiagnosticsManager::getDiagStatus(const diagnostic_param<int>& param, const int value)
+{
+  diagnostic_msgs::KeyValue kv;
+  kv.key = param.parameter_name;
+  kv.value = std::to_string(value);
+
+  diagnostic_msgs::DiagnosticStatus diag_status;
+  diag_status.values.push_back(kv);
+  diag_status.name = "flir camera: " + param.parameter_name;
+  diag_status.hardware_id = serial_number_;
+
+  // Determine status level
+  if (!param.check_value || param.ok_value == value)
+  {
+    diag_status.level = 0;
+    diag_status.message = "OK";
+  }
+  else if (param.warn_value == value)
   {
     diag_status.level = 1;
     diag_status.message = "WARNING";
@@ -127,7 +165,7 @@ void DiagnosticsManager::processDiagnostics(SpinnakerCamera* spinnaker)
   diag_array.status.push_back(diag_manufacture_info);
 
   // Float based parameters
-  for (const diagnostic_params<float>& param : float_params_)
+  for (const diagnostic_bounds<float>& param : bounded_float_params_)
   {
     Spinnaker::GenApi::CFloatPtr float_ptr =
         static_cast<Spinnaker::GenApi::CFloatPtr>(spinnaker->readProperty(param.parameter_name));
@@ -139,12 +177,65 @@ void DiagnosticsManager::processDiagnostics(SpinnakerCamera* spinnaker)
   }
 
   // Int based parameters
-  for (const diagnostic_params<int>& param : integer_params_)
+  for (const diagnostic_bounds<int>& param : bounded_integer_params_)
   {
-    Spinnaker::GenApi::CIntegerPtr integer_ptr =
-        static_cast<Spinnaker::GenApi::CIntegerPtr>(spinnaker->readProperty(param.parameter_name));
+    Spinnaker::GenApi::CNodePtr node_ptr = spinnaker->readProperty(param.parameter_name);
 
-    int int_value = integer_ptr->GetValue(true);
+    int int_value = 0;
+    switch(node_ptr->GetPrincipalInterfaceType())
+    {
+      case Spinnaker::GenApi::intfIInteger:
+      {
+        Spinnaker::GenApi::CIntegerPtr integer_ptr =
+            static_cast<Spinnaker::GenApi::CIntegerPtr>(node_ptr);
+        int_value = integer_ptr->GetValue();
+        break;
+      }
+      case Spinnaker::GenApi::intfIEnumeration:
+      {
+        Spinnaker::GenApi::CEnumerationPtr enum_ptr =
+            static_cast<Spinnaker::GenApi::CEnumerationPtr>(node_ptr);
+        int_value = enum_ptr->GetIntValue();
+        break;
+      }
+      default:
+      {
+        ROS_DEBUG("[SpinnakerCamera]: Unsupported diagnostic type.");
+        break;
+      }
+    }
+
+    diagnostic_msgs::DiagnosticStatus diag_status = getDiagStatus(param, int_value);
+    diag_array.status.push_back(diag_status);
+  }
+
+  for (const diagnostic_param<int>& param : integer_params_)
+  {
+    Spinnaker::GenApi::CNodePtr node_ptr = spinnaker->readProperty(param.parameter_name);
+
+    int int_value = 0;
+    switch(node_ptr->GetPrincipalInterfaceType())
+    {
+      case Spinnaker::GenApi::intfIInteger:
+      {
+        Spinnaker::GenApi::CIntegerPtr integer_ptr =
+            static_cast<Spinnaker::GenApi::CIntegerPtr>(node_ptr);
+        int_value = integer_ptr->GetValue();
+        break;
+      }
+      case Spinnaker::GenApi::intfIEnumeration:
+      {
+        Spinnaker::GenApi::CEnumerationPtr enum_ptr =
+            static_cast<Spinnaker::GenApi::CEnumerationPtr>(node_ptr);
+        int_value = enum_ptr->GetIntValue();
+        break;
+      }
+      default:
+      {
+        ROS_DEBUG("[SpinnakerCamera]: Unsupported diagnostic type.");
+        break;
+      }
+    }
     diagnostic_msgs::DiagnosticStatus diag_status = getDiagStatus(param, int_value);
     diag_array.status.push_back(diag_status);
   }

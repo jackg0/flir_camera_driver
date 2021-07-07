@@ -94,20 +94,35 @@ public:
   void addDiagnostic(const Spinnaker::GenICam::gcstring name, bool check_ranges = false,
                      std::pair<float, float> operational = std::make_pair(0.0, 0.0), float lower_bound = 0,
                      float upper_bound = 0);
+  void addDiagnostic(const Spinnaker::GenICam::gcstring name, bool check_value = false,
+                     int ok_value = 0, int warn_value = 0);
 
 private:
   /*
-   * diagnostic_params is aData Structure to represent a parameter and its
+   * diagnostic_bounds is aData Structure to represent a parameter and its
    * bounds
    */
   template <typename T>
-  struct diagnostic_params
+  struct diagnostic_bounds
   {
     Spinnaker::GenICam::gcstring parameter_name;  // This should be the same as written in the User Manual
     bool check_ranges;
     std::pair<T, T> operational_range;  // Normal operatinal range
     T warn_range_lower;
     T warn_range_upper;
+  };
+
+  /*
+   * diagnostic_params is a data structure to represent a parameter and its
+   * target value
+   */
+  template <typename T>
+  struct diagnostic_param
+  {
+    Spinnaker::GenICam::gcstring parameter_name;  // This should be the same as written in the User Manual
+    bool check_value;
+    T ok_value;                         // Desired operational value
+    T warn_value;
   };
 
   /*!
@@ -121,7 +136,9 @@ private:
    * device
    */
   template <typename T>
-  diagnostic_msgs::DiagnosticStatus getDiagStatus(const diagnostic_params<T>& param, const T value);
+  diagnostic_msgs::DiagnosticStatus getDiagStatus(const diagnostic_bounds<T>& param, const T value);
+
+  diagnostic_msgs::DiagnosticStatus getDiagStatus(const diagnostic_param<int>& param, const int value);
 
   // constuctor parameters
   std::string camera_name_;
@@ -129,8 +146,9 @@ private:
   std::shared_ptr<ros::Publisher> diagnostics_pub_;
 
   // vectors to keep track of the items to publish
-  std::vector<diagnostic_params<int>> integer_params_;
-  std::vector<diagnostic_params<float>> float_params_;
+  std::vector<diagnostic_bounds<int>> bounded_integer_params_;
+  std::vector<diagnostic_bounds<float>> bounded_float_params_;
+  std::vector<diagnostic_param<int>> integer_params_;
   // Information about the device model, firmware, etc
   // TODO(mlowe): Allow these to be configured
   // clang-format off
